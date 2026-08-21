@@ -88,9 +88,96 @@ Why that fits Helix better than “support via balance deltas”:
 
 ### Upgradeability stance
 
-Take an explicit position and justify it. Genius is deliberately immutable with no admin key, and V2 ships as an entirely separate deployment with a `Migration.sol` handling the V1→V2 path. Having worked on that, you can speak to the tradeoff credibly.
+**Committed model: hybrid — Genius-style core immutability + Maker-style swappable strategies.**
 
-If you choose immutable, sketch the migration story now. If you choose upgradeable, document exactly which storage layout constraints you're committing to.
+Helix does not make everything upgradeable. Split *what must change over time* from *what must never silently change under users’ feet*, then use the lightest mechanism that allows the first without lying about the second.
+
+| Layer | Mechanism | Why |
+| :--- | :--- | :--- |
+| Core accounting (shares, indexes, custody) | **Immutable** `Market` / `LendingPool` deployment | Bugs here are existential; in-place upgrades are also an existential trust risk. Breaking fixes ship as Helix vNext + migration (Genius V1→V2 pattern). |
+| Risk *parameters* (LTV, thresholds, reserve factor, kink, dust, auction bounds, adaptive caps) | **Governance setters** via timelock — not bytecode upgrades | Already Phase 3; if it fits in a `uint` / `address` / `bool`, it is not an upgrade. |
+| Risk *logic* (rate curve shape, auction decay, adaptive stress formula, oracle adapters) | **Replaceable module addresses** (strategy pattern) | Most “we need an upgrade” cases are really “swap the strategy.” |
+| New assets / markets | **Factory + new market instance** | Avoid packing every asset into one upgradeable god-contract. |
+| Helix vNext (breaking accounting / precision / packing) | **New deployment + migration helper** | Honest story for breaking changes; mirrors Genius. |
+
+**One-line interview stance:** Helix upgrades risk logic by swapping strategies; it does not upgrade user accounting without a migration.
+
+#### Architecture
+
+```text
+Governance / Timelock
+        │
+        ├─ set params on Market
+        ├─ set IRM / Oracle / PriceCurve / AdaptiveModel addresses
+        └─ (optional stretch) upgrade Market implementation — not the default product story
+
+Market (LendingPool + position storage)  ← custody + indexes + shares; IMMUTABLE by default
+   ├─ calls InterestRateModel
+   ├─ calls OracleAggregator
+   └─ starts auction on AuctionHouse
+
+AuctionHouse
+   └─ calls AuctionPriceCurve; settles via Market
+```
+
+**MVP (Phases 1–2):** immutable `Market` + swappable IRM / Oracle / `AuctionPriceCurve`.  
+**Optional stretch:** UUPS on `Market` only to practice upgrade-safe storage — not the default README claim.
+
+#### What changes how
+
+**A. Governance parameters only (no upgrade)**  
+LTV / liquidation threshold / close-factor bounds; reserve factor; kink utilization; base/slope rates; dust / min borrow; auction start/max discount and duration bounds; adaptive stress decay window and max multiplier caps; guardian pause flags (within scoped powers).
+
+**B. Swappable modules (timelocked address pointer)**  
+
+| Module | Why it changes | Constraint |
+| :--- | :--- | :--- |
+| `InterestRateModel` | New curve families, utilization targeting | Fixed interface; market stores `irm` address only |
+| `OracleAggregator` / adapters | New feeds, L2 sequencer rules, TWAP window | Market stores `oracle` address; do not bake feed IDs into frozen pool layout |
+| `AuctionPriceCurve` (Maker `Abacus`-style) | Linear vs exponential / stair-step decay | Auction calls `price(start, elapsed)`; curve is replaceable |
+| `AdaptiveRiskModel` | Stress weighting (linear vs sigmoid) | Market/auction reads multiplier from module; position stores only `stressDelta` snapshot |
+| Collateral / market registry | Add asset, set caps | Registry + per-market config — not upgrading `CollateralManager` bytecode |
+
+Module swaps **must not** rewrite historical indexes or seize funds; they only change *forward* pricing and risk. Optional: per-market `modulesLocked` after listing.
+
+**C. Real proxy upgrade (rare — stretch only)**  
+Accounting bugs that cannot be patched by pause + module swap, or storage that cannot live in a peripheral contract. Prefer shipping Helix vNext + migration instead.
+
+**D. Never upgrade in place**  
+Meaning of supply/borrow shares; diverting withdrawals to an admin; expanding guardian powers beyond “pause new risk, never block repay / unencumbered withdraw”; silently changing the rounding table or precision domains (18 / RAY-27 / share decimals).
+
+#### Storage layout commitments (if / when a proxy is used)
+
+Use **ERC-7201 namespaced storage** per concern — not one sequential layout:
+
+- `helix.market.core` — totals, indexes, reserves  
+- `helix.market.positions` — packed position mapping  
+- `helix.market.modules` — IRM, oracle, curve, adaptive model addresses  
+- `helix.market.risk` — caps, LTV, pause flags  
+- `helix.auction` — auction state  
+- `helix.badDebt` — deficits  
+
+**Hard constraints (never violate):**
+
+1. **Append-only within a namespace** — never reorder, delete, or change the type of an existing field.  
+2. **Frozen position packing** — the single-slot position word is immutable once deployed; new fields go in a new mapping or `positionsV2` namespace.  
+3. **Mappings keep their declared slots forever** — only add *new* mappings.  
+4. **No unstructured `delegatecall` to user-supplied addresses** — only governance-set implementation or fixed module interfaces.  
+5. **Upgrade auth** — timelocked governance only; **guardian cannot upgrade**.  
+6. **Upgrade payload cannot** broaden pause to block repay or unencumbered withdraw, and cannot add admin seizure of user funds.  
+7. Prefer ERC-7201 over classic OZ `__gap`; if sequential storage is used anyway, never shrink gaps.  
+8. **Initializers** — `reinitializer(v)` per upgrade that adds namespaces; ownership must not be re-init’d to an arbitrary EOA.  
+9. **Precision domains frozen** — changing 18 / 27 / share decimals requires migration, not an in-place upgrade.  
+10. **Token policy frozen per market** — a market listed as non-FoT stays non-FoT.
+
+**Allowed in an upgrade (stretch path):** fix accrual bugs going forward; add a new namespace; richer events / views; point at new modules (usually better *without* upgrading).  
+**Forbidden:** rewrite historical `borrowIndex` / share balances; haircut shares except via the documented bad-debt path in normal protocol flow; change rounding direction; bypass timelock.
+
+#### Migration story (default path for breaking changes)
+
+1. Deploy Helix vNext markets (new immutable bytecode + new namespaces if needed).  
+2. Governance / users migrate: withdraw from vN or use a `Migration.sol`-style helper that repays, pulls collateral, and re-opens in vNext where safe.  
+3. vN stays readable and withdrawable under the original rules; it is not brick’d by a hostile upgrade.
 
 ---
 
