@@ -59,13 +59,13 @@ Share-based accounting plus an empty pool is the classic ERC-4626 donation attac
 - Virtual shares and virtual assets (OpenZeppelin ERC-4626 approach), **or**
 - Dead-shares seed minted to address(0) at market initialization
 
-Worth noting Genius sidesteps this by construction — its share rate starts at a fixed ~2,618 GENI per share rather than being derived from a pool ratio, so there is no empty-pool state to attack. If you want to avoid the problem class entirely, that's the design move.
+We'll continue with the ERC-4626 approach at Market Initialization approach for now. (Research Needed)
 
 ### Dust / debt floor
 
-Enforce a minimum borrow size per market (Maker calls this `dust`). Without it you get positions too small to liquidate profitably — gas exceeds the liquidation bonus — which become permanent uncollectable bad debt. Also enforce that a partial liquidation cannot leave a position *below* the floor; it must either stay above it or be fully closed.
+Enforce a minimum borrow size per market (Maker calls this `dust`). Without it we get positions too small to liquidate profitably — gas exceeds the liquidation bonus — which become permanent uncollectable bad debt. Also enforce that a partial liquidation cannot leave a position *below* the floor; it must either stay above it or be fully closed.
 
-Your Phase 2 fuzzer will find the unprofitable-liquidation size immediately if you skip this.
+Phase 2 fuzzer will find the unprofitable-liquidation size immediately if we skip this.
 
 ### Token compatibility policy
 
@@ -75,7 +75,16 @@ State it explicitly and enforce it:
 - **Rebasing** — unsupported; balances desync from share accounting silently
 - **ERC-777 / callback tokens** — this is real reentrancy surface, especially in Phase 2 where partial fills transfer to arbitrary liquidator addresses
 
-Genius formalized its supply accounting into a custom token standard (ERC1618, with `normal`/`mining`/`exiled` buckets) precisely to avoid ambiguity here. You don't need a new standard, but you do need a written policy.
+We don't need a new standard, but we do need a written policy.
+
+*What Helix should do*
+Default: unsupported for listed markets. Do not list FoT assets as collateral or borrowables.
+
+Why that fits Helix better than “support via balance deltas”:
+
+- **Share accounting** — deposit/borrow shares assume Δassets matches the user’s intent. FoT forces every path to measure balance before/after and mint/burn on the received amount, which is easy to get wrong on repay, liquidate, and partial auction fills.
+- **Dutch auction + partial fills** — liquidator pays debt and receives collateral in multiple transfers. A tax on either leg desyncs “debt cleared” vs “collateral seized” and can leave the position under- or over-closed relative to health factor.
+- **Production story** — Aave/Compound-class protocols mostly whitelist assets and refuse FoT. Supporting FoT is a niche Morpho/weird-asset problem, not the complexity we want Helix known for.
 
 ### Upgradeability stance
 
