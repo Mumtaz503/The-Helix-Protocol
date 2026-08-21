@@ -88,13 +88,13 @@ Why that fits Helix better than “support via balance deltas”:
 
 ### Upgradeability stance
 
-**Committed model: hybrid — Genius-style core immutability + Maker-style swappable strategies.**
+**Committed model: hybrid — Core immutability + Maker-style swappable strategies.**
 
 Helix does not make everything upgradeable. Split *what must change over time* from *what must never silently change under users’ feet*, then use the lightest mechanism that allows the first without lying about the second.
 
 | Layer | Mechanism | Why |
 | :--- | :--- | :--- |
-| Core accounting (shares, indexes, custody) | **Immutable** `Market` / `LendingPool` deployment | Bugs here are existential; in-place upgrades are also an existential trust risk. Breaking fixes ship as Helix vNext + migration (Genius V1→V2 pattern). |
+| Core accounting (shares, indexes, custody) | **Immutable** `Market` / `LendingPool` deployment | Bugs here are existential; in-place upgrades are also an existential trust risk. Breaking fixes ship as Helix vNext + migration. |
 | Risk *parameters* (LTV, thresholds, reserve factor, kink, dust, auction bounds, adaptive caps) | **Governance setters** via timelock — not bytecode upgrades | Already Phase 3; if it fits in a `uint` / `address` / `bool`, it is not an upgrade. |
 | Risk *logic* (rate curve shape, auction decay, adaptive stress formula, oracle adapters) | **Replaceable module addresses** (strategy pattern) | Most “we need an upgrade” cases are really “swap the strategy.” |
 | New assets / markets | **Factory + new market instance** | Avoid packing every asset into one upgradeable god-contract. |

@@ -1,0 +1,23 @@
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Foundry
+contracts/cache/
+contracts/out/
+contracts/broadcast/*/31337/
+contracts/broadcast/**/dry-run/
+
+# Node / apps (future)
+node_modules/
+dist/
+build/
+.next/
+coverage/
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/
