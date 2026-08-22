@@ -4,6 +4,9 @@ pragma solidity ^0.8.28;
 
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
+import {BASIS_POINTS, RAY} from "./libraries/HelixLib.sol";
+import {HelixMath} from "./libraries/HelixMath.sol";
+import {IInterestRateModel} from "./interfaces/IInterestRateModel.sol";
 
 /*******************************************************************************
  *
@@ -57,8 +60,25 @@ import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
  ******************************************************************************/
 
 contract LendingPool is ReentrancyGuard, Pausable {
-    constructor() {
-        // constructor
+    constructor(
+        address _underlying,
+        address _collateralManager,
+        address _oracle,
+        address _interestRateModel,
+        uint256 _reserveFactor,
+        uint256 _dust
+    ) {
+        underlying = _underlying;
+        collateralManager = _collateralManager;
+        oracle = _oracle;
+        interestRateModel = _interestRateModel;
+        reserveFactor = _reserveFactor;
+        dust = _dust;
+
+        // Indexes start at RAY — never zero (Helix storage rule).
+        _market.borrowIndex = uint128(RAY);
+        _market.supplyIndex = uint128(RAY);
+        _market.lastUpdateTimestamp = uint40(block.timestamp);
     }
 
     /***************************************************************************
@@ -77,6 +97,19 @@ contract LendingPool is ReentrancyGuard, Pausable {
      *
      **************************************************************************/
 
+    /// @dev Packed global market accounting — indexes and totals in three slots.
+    ///      Indexes initialize to RAY (never zero). lastUpdateTimestamp is zero only pre-init.
+    struct MarketState {
+        uint128 borrowIndex;
+        uint128 supplyIndex;
+        uint128 totalSupplyAssets;
+        uint128 totalBorrowAssets;
+        uint128 totalSupplyShares;
+        uint128 totalBorrowShares;
+        uint128 reserves;
+        uint40 lastUpdateTimestamp;
+    }
+
     /***************************************************************************
      *
      *
@@ -92,6 +125,15 @@ contract LendingPool is ReentrancyGuard, Pausable {
      *
      *
      **************************************************************************/
+    address public immutable underlying;
+    address public immutable collateralManager;
+    address public immutable oracle;
+
+    address public interestRateModel;
+    uint256 public reserveFactor;
+    uint256 public dust;
+
+    MarketState internal _market;
 
     /***************************************************************************
      *
@@ -100,6 +142,8 @@ contract LendingPool is ReentrancyGuard, Pausable {
      *
      *
      **************************************************************************/
+    uint256 internal constant VIRTUAL_SHARES = 1e18;
+    uint256 internal constant VIRTUAL_ASSETS = 1e18;
 
     /***************************************************************************
      *
@@ -290,6 +334,30 @@ contract LendingPool is ReentrancyGuard, Pausable {
      *
      **************************************************************************/
 
+    function borrowIndex() external view returns (uint256) {
+        return _market.borrowIndex;
+    }
+
+    function supplyIndex() external view returns (uint256) {
+        return _market.supplyIndex;
+    }
+
+    function totalSupplyAssets() external view returns (uint256) {
+        return _market.totalSupplyAssets;
+    }
+
+    function totalBorrowAssets() external view returns (uint256) {
+        return _market.totalBorrowAssets;
+    }
+
+    function reserves() external view returns (uint256) {
+        return _market.reserves;
+    }
+
+    function lastUpdateTimestamp() external view returns (uint256) {
+        return _market.lastUpdateTimestamp;
+    }
+
     /***************************************************************************
      *
      *
@@ -297,6 +365,70 @@ contract LendingPool is ReentrancyGuard, Pausable {
      *
      *
      **************************************************************************/
+
+    /// @dev Advances borrow/supply indices and protocol reserves for elapsed time.
+    ///      Idempotent within a block. Index advance truncates (floor) per rounding table.
+    ///      No event — accrue runs on every user action; logging is opt-in at call sites.
+    function _accrueInterest() internal {
+        MarketState memory state = _market;
+        uint256 timestamp = block.timestamp;
+        if (timestamp == state.lastUpdateTimestamp) return;
+
+        unchecked {
+            uint256 timeDelta = timestamp - state.lastUpdateTimestamp;
+
+            // update _market's last time stamp
+            state.lastUpdateTimestamp = uint40(timestamp);
+
+            if (state.totalBorrowAssets != 0) {
+                state = _accrueWithDebt(state, timeDelta);
+            }
+            _market = state;
+        }
+    }
+
+    function _accrueWithDebt(
+        MarketState memory state,
+        uint256 timeDelta
+    ) internal view returns (MarketState memory) {
+        uint256 totalBorrow = state.totalBorrowAssets;
+
+        // For testing we used a constant constructor set borrowRate
+        uint256 borrowRate = IInterestRateModel(interestRateModel).getBorrowRate(
+            state.totalSupplyAssets,
+            totalBorrow
+        );
+
+        // Global index that tracks the total debt growth over time
+        uint256 oldBorrowIndex = state.borrowIndex;
+
+        // Compund the global borrow index
+        uint256 newBorrowIndex = HelixMath.rayMul(
+            oldBorrowIndex,
+            HelixMath.rayCompound(borrowRate, timeDelta)
+        );
+        state.borrowIndex = uint128(newBorrowIndex);
+
+        uint256 newTotalBorrow = (totalBorrow * newBorrowIndex) / oldBorrowIndex;
+        uint256 borrowInterest = newTotalBorrow - totalBorrow;
+        state.totalBorrowAssets = uint128(newTotalBorrow);
+
+        if (borrowInterest == 0) return state;
+
+        uint256 reserveIncrease = (borrowInterest * reserveFactor) / BASIS_POINTS;
+        state.reserves = uint128(uint256(state.reserves) + reserveIncrease);
+
+        uint256 supplyInterest = borrowInterest - reserveIncrease;
+        uint256 totalSupply = state.totalSupplyAssets;
+        if (totalSupply == 0 || supplyInterest == 0) return state;
+
+        uint256 oldSupplyIndex = state.supplyIndex;
+        state.supplyIndex = uint128(
+            oldSupplyIndex + HelixMath.rayMul(oldSupplyIndex, (supplyInterest * RAY) / totalSupply)
+        );
+        state.totalSupplyAssets = uint128(totalSupply + supplyInterest);
+        return state;
+    }
 
     /***************************************************************************
      *
