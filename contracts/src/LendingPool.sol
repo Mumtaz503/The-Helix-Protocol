@@ -394,10 +394,8 @@ contract LendingPool is ReentrancyGuard, Pausable {
         uint256 totalBorrow = state.totalBorrowAssets;
 
         // For testing we used a constant constructor set borrowRate
-        uint256 borrowRate = IInterestRateModel(interestRateModel).getBorrowRate(
-            state.totalSupplyAssets,
-            totalBorrow
-        );
+        uint256 borrowRate = IInterestRateModel(interestRateModel)
+            .getBorrowRate(state.totalSupplyAssets, totalBorrow);
 
         // Global index that tracks the total debt growth over time
         uint256 oldBorrowIndex = state.borrowIndex;
@@ -409,13 +407,15 @@ contract LendingPool is ReentrancyGuard, Pausable {
         );
         state.borrowIndex = uint128(newBorrowIndex);
 
-        uint256 newTotalBorrow = (totalBorrow * newBorrowIndex) / oldBorrowIndex;
+        uint256 newTotalBorrow = (totalBorrow * newBorrowIndex) /
+            oldBorrowIndex;
         uint256 borrowInterest = newTotalBorrow - totalBorrow;
         state.totalBorrowAssets = uint128(newTotalBorrow);
 
         if (borrowInterest == 0) return state;
 
-        uint256 reserveIncrease = (borrowInterest * reserveFactor) / BASIS_POINTS;
+        uint256 reserveIncrease = (borrowInterest * reserveFactor) /
+            BASIS_POINTS;
         state.reserves = uint128(uint256(state.reserves) + reserveIncrease);
 
         uint256 supplyInterest = borrowInterest - reserveIncrease;
@@ -424,7 +424,11 @@ contract LendingPool is ReentrancyGuard, Pausable {
 
         uint256 oldSupplyIndex = state.supplyIndex;
         state.supplyIndex = uint128(
-            oldSupplyIndex + HelixMath.rayMul(oldSupplyIndex, (supplyInterest * RAY) / totalSupply)
+            oldSupplyIndex +
+                HelixMath.rayMul(
+                    oldSupplyIndex,
+                    (supplyInterest * RAY) / totalSupply
+                )
         );
         state.totalSupplyAssets = uint128(totalSupply + supplyInterest);
         return state;
