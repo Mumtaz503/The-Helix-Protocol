@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {RAY, WAD} from "./HelixLib.sol";
 
+uint256 constant RAY = 1e27; //For interest accrual calculations precision
+uint256 constant WAD = 1e18; // For token amounts precision
+uint256 constant BASIS_POINTS = 1e4; // 10% of borrowed interest is reserved
 /// @title HelixMath
 /// @notice RAY-scaled fixed-point math for Helix markets. All divisions truncate (floor)
 ///         unless noted — rounding favors the protocol per the Helix rounding table.

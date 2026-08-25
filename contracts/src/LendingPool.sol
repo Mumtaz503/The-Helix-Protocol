@@ -4,8 +4,7 @@ pragma solidity ^0.8.28;
 
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
-import {BASIS_POINTS, RAY} from "./libraries/HelixLib.sol";
-import {HelixMath} from "./libraries/HelixMath.sol";
+import {HelixMath, RAY, BASIS_POINTS} from "./libraries/HelixMath.sol";
 import {IInterestRateModel} from "./interfaces/IInterestRateModel.sol";
 
 /*******************************************************************************
@@ -106,6 +105,9 @@ contract LendingPool is ReentrancyGuard, Pausable {
         uint128 totalBorrowAssets;
         uint128 totalSupplyShares;
         uint128 totalBorrowShares;
+
+        // This is more than three slots
+        // TODO: Need to fix it
         uint128 reserves;
         uint40 lastUpdateTimestamp;
     }
