@@ -9,7 +9,8 @@ import {IInterestRateModel} from "./interfaces/IInterestRateModel.sol";
 
 /*******************************************************************************
  *
- * lendingPool
+ * @title: LendingPool
+ * @author: mumtaz503
  *
  * This contract is the immutable accounting core for a single asset market (e.g., USDC).
  *

@@ -6,7 +6,8 @@ import {HelixMath, WAD} from "./libraries/HelixMath.sol";
 
 /*******************************************************************************
  *
- * InterestRateModel
+ * @title: InterestRateModel
+ * @author: mumtaz503
  *
  * This contract implements the interest rate model for the protocol's interest accrual.
  * @notice all rates exposed by the IRM are per-second values in RAY
@@ -25,6 +26,7 @@ error InterestRateModel__KinkExceededWAD();
 error InterestRateModel__RateTooHigh();
 error InterestRateModel__Slope2TooLow();
 error InterestRateModel__MaxRateTooLow();
+
 /*******************************************************************************
  *
  * PRIVATE INTERFACES SPECIFIC TO THIS CONTRACT
@@ -74,6 +76,14 @@ contract InterestRateModel is IInterestRateModel {
             _maxRatePerSecond > 0 && _maxRatePerSecond >= _baseRatePerSecond,
             InterestRateModel__MaxRateTooLow()
         );
+        rateParams = RateParams({
+            baseRatePerSecond: uint64(_baseRatePerSecond),
+            slope1PerSecond: uint64(_slope1PerSecond),
+            slope2PerSecond: uint64(_slope2PerSecond),
+            kink: uint64(_kink)
+        });
+
+        maxRatePerSecond = _maxRatePerSecond;
     }
 
     /***************************************************************************
@@ -102,7 +112,7 @@ contract InterestRateModel is IInterestRateModel {
         uint64 slope1PerSecond;
         uint64 slope2PerSecond;
         uint64 kink; // WAD, 0.8e18 = 8e17 fits in uint64
-        // ^--- if kink needs full WAD, then we need to store it as uint128
+        // ^--- if kink needs full WAD, then we need to store it as uint128 along with maxRatePerSecond
         // TODO: Check/research if Kink needs full WAD
     }
 
@@ -123,6 +133,7 @@ contract InterestRateModel is IInterestRateModel {
      *
      *
      **************************************************************************/
+    RateParams public rateParams;
 
     /***************************************************************************
      *
@@ -164,10 +175,60 @@ contract InterestRateModel is IInterestRateModel {
      *
      **************************************************************************/
     function getBorrowRate(
-        uint256 totalSupplyAssets,
-        uint256 totalBorrowAssets
+        uint256 _totalSupplyAssets,
+        uint256 _totalBorrowAssets
     ) external view returns (uint256 borrowRatePerSecond) {
-        return 0;
+        // pull the rate params from storage & cache them in memory for better gas efficiency
+        RateParams memory _rateParams = rateParams;
+
+        uint256 baseRatePerSecond = _rateParams.baseRatePerSecond;
+        uint256 slope1PerSecond = _rateParams.slope1PerSecond;
+        uint256 slope2PerSecond = _rateParams.slope2PerSecond;
+        uint256 kink = _rateParams.kink;
+
+        // return base rate at 0& Utilization
+        if (_totalBorrowAssets == 0 || _totalSupplyAssets == 0) {
+            return baseRatePerSecond;
+        }
+
+        uint256 utilization = (_totalBorrowAssets * WAD) / _totalSupplyAssets;
+
+        if (utilization <= kink) {
+            // e.g: base = 0, slope1 = 5, utilization = 40% = 0.4e18 = 4e17
+            // at 40% utilization, the user pays 40% of the slope1 rate
+            borrowRatePerSecond =
+                baseRatePerSecond +
+                (utilization * slope1PerSecond) /
+                WAD;
+        } else {
+            // e.g: base = 0, kink = 80%, utilization = 90% = 0.9e18 = 9e17
+            // at 90% utilization, the user pays 80% of the slope1 rate + 10% of the slope2 rate
+            // rate = base + 0.8 * slope1 + 0.1 * slope2
+            borrowRatePerSecond =
+                baseRatePerSecond +
+                (kink * slope1PerSecond) /
+                WAD +
+                ((utilization - kink) * slope2PerSecond) /
+                WAD;
+        }
+
+        if (borrowRatePerSecond > maxRatePerSecond) {
+            return maxRatePerSecond;
+        }
+
+        return borrowRatePerSecond;
+    }
+
+    function getUtilization(
+        uint256 _totalSupplyAssets,
+        uint256 _totalBorrowAssets
+    ) external pure returns (uint256 utilizationWad) {
+        // 0% utilization at no borrowing
+        if ( _totalSupplyAssets == 0 ) {
+            return 0;
+        }
+
+        utilizationWad = (_totalBorrowAssets * WAD) / _totalSupplyAssets;
     }
     /***************************************************************************
      *

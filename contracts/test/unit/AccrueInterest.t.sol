@@ -4,7 +4,7 @@ pragma solidity ^0.8.28;
 import {Test} from "forge-std/Test.sol";
 import {LendingPool} from "../../src/LendingPool.sol";
 import {MockInterestRateModel} from "../../src/mocks/MockInterestRateModel.sol";
-import {RAY, BASIS_POINTS} from "../../src/libraries/HelixLib.sol";
+import {RAY, BASIS_POINTS} from "../../src/libraries/HelixMath.sol";
 
 contract LendingPoolHarness is LendingPool {
     constructor(

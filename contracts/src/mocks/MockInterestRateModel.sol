@@ -18,4 +18,12 @@ contract MockInterestRateModel is IInterestRateModel {
         if (totalBorrowAssets == 0) return 0;
         return borrowRatePerSecond;
     }
+
+    function getUtilization(
+        uint256 _totalSupplyAssets,
+        uint256 totalBorrowAssets
+    ) external pure returns (uint256) {
+        if (_totalSupplyAssets == 0) return 0;
+        return totalBorrowAssets / _totalSupplyAssets;
+    }
 }
