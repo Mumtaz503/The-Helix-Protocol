@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+error InvalidAddress(address pool);
+error InvalidAmount(address pool);
+error InsufficientBalance(address pool);
+
 
 uint256 constant RAY = 1e27; //For interest accrual calculations precision
 uint256 constant WAD = 1e18; // For token amounts precision

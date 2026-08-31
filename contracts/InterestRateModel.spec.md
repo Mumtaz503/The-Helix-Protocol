@@ -146,7 +146,7 @@ Borrow rate rounded **down** pairs with `LendingPool` index advance rounded **do
 
 ## Storage layout
 
-**Goal:** single slot for curve parameters (Genius-style packed globals).
+**Goal:** single slot for curve parameters
 
 ```solidity
 struct RateParams {
@@ -164,7 +164,7 @@ uint256 maxRatePerSecond;        // Slot 1 (0 = disabled)
 
 **Alternative (if kink needs full WAD 1e18):** store `kink` as `uint128` + `maxRatePerSecond` as `uint128` in slot 1; keep three uint64 slopes + base in slot 0.
 
-**Storage rule (Helix / Genius):** do not rely on `0` as “enabled” for rates — `baseRatePerSecond` may legitimately be `0`; use explicit `maxRatePerSecond == 0` to mean “no cap”.
+**Storage rule:** do not rely on `0` as “enabled” for rates — `baseRatePerSecond` may legitimately be `0`; use explicit `maxRatePerSecond == 0` to mean “no cap”.
 
 ---
 
@@ -436,7 +436,7 @@ Exact compounding over a year differs slightly due to truncation; UI should labe
 
 ---
 
-## Gas / implementation checklist (Genius-style rules applied)
+## Gas / implementation checklist 
 
 - [ ] **No events** on `getBorrowRate` (hot path).
 - [ ] **Pure/view math** — no external calls inside IRM.
@@ -472,11 +472,6 @@ contracts/src/
 | 3 | Supply rate function on IRM vs off-chain SDK? | **View on IRM** for subgraph/keeper convenience |
 | 4 | Abstract vs concrete base class? | **Concrete** `InterestRateModel`; delete broken abstract stub |
 
----
-
-## One-line interview answer
-
-> Helix uses a Compound-style kinked curve that returns a **RAY per-second borrow rate** from pool utilization; the **LendingPool** compounds it into `borrowIndex` via binary exponentiation, then splits interest between **suppliers** and **protocol reserves** — the IRM only prices the borrow side.
 
 ---
 

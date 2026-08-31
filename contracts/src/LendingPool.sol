@@ -4,7 +4,8 @@ pragma solidity ^0.8.28;
 
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
-import {HelixMath, RAY, BASIS_POINTS} from "./libraries/HelixMath.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "./libraries/HelixMath.sol";
 import {IInterestRateModel} from "./interfaces/IInterestRateModel.sol";
 
 /*******************************************************************************
@@ -106,7 +107,6 @@ contract LendingPool is ReentrancyGuard, Pausable {
         uint128 totalBorrowAssets;
         uint128 totalSupplyShares;
         uint128 totalBorrowShares;
-
         // This is more than three slots
         // TODO: Need to fix it
         uint128 reserves;
@@ -188,7 +188,15 @@ contract LendingPool is ReentrancyGuard, Pausable {
         uint256 amount,
         address onBehalfOf
     ) external nonReentrant whenNotPaused returns (uint256 sharesMinted) {
+        require(amount > 0, InvalidAmount(address(this)));
+        require(onBehalfOf != address(0), InvalidAddress(address(this)));
+        require(
+            IERC20(underlying).balanceOf(msg.sender) >= amount,
+            InsufficientBalance(address(this))
+        );
+        
         // Accrues interest (_accrueInterest())
+        _accrueInterest();
         // Transfers amount of underlying from caller.
         // Computes shares to mint sharesMinted = _convertToShares(amount, Math.FLOOR)
         //   (round down, per rounding table).

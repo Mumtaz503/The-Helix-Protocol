@@ -200,6 +200,7 @@ contract InterestRateModel is IInterestRateModel {
                 baseRatePerSecond +
                 (utilization * slope1PerSecond) /
                 WAD;
+        // if utilization is greater than kink
         } else {
             // e.g: base = 0, kink = 80%, utilization = 90% = 0.9e18 = 9e17
             // at 90% utilization, the user pays 80% of the slope1 rate + 10% of the slope2 rate
