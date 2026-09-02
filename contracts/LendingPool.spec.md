@@ -16,8 +16,6 @@
 
 **Upgradeability stance:** pool bytecode is **immutable**. Risk modules (`interestRateModel`, `auctionHouse`) are replaceable via governance pointer. Parameters (`reserveFactor`, `dust`) are governance setters (Phase 3 timelock).
 
-**One-line interview stance:** Helix pool accounting never upgrades in place; it accrues via global indices, prices borrows through a swappable IRM, and keeps health checks live-oracle — never cache-authoritative.
-
 ---
 
 ## Architecture (READ THIS FIRST)
@@ -284,7 +282,7 @@ struct MarketState {
 }
 ```
 
-Indexes initialize to `RAY` — **never zero** (Helix / Genius storage rule).
+Indexes initialize to `RAY` — **never zero** (Packing Storage Structs).
 
 ### New user state (separate slots — mappings)
 
@@ -295,7 +293,7 @@ mapping(address => uint8)  usingAsCollateral;  // see below
 mapping(address => mapping(address => uint256)) supplyShareAllowance;  // optional ERC-20-style
 ```
 
-**`usingAsCollateral` encoding (Genius rule: 0 = non-existent):**
+**`usingAsCollateral` encoding (rule: 0 = non-existent):**
 
 | Value | Meaning |
 | :--- | :--- |
@@ -908,13 +906,5 @@ contracts/
     ├── AccrueInterest.t.sol         ← existing
     └── LendingPool*.t.sol           ← to create
 ```
-
----
-
-## One-line interview answer
-
-> Helix `LendingPool` accrues on every touch via global indices, mints supply shares with ERC-4626 virtual offset, mints borrow shares against `borrowIndex` with protocol-favor rounding, and delegates live health-factor checks to `CollateralManager` — repay and unencumbered withdraw stay unpausable by design.
-
----
 
 *Spec version: Phase 1 · aligns with [helix_protocol_spec.md](../helix_protocol_spec.md), [InterestRateModel.spec.md](./InterestRateModel.spec.md), and `LendingPool._accrueWithDebt` as implemented.*
