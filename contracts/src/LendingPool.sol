@@ -5,6 +5,7 @@ pragma solidity ^0.8.28;
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "./libraries/HelixMath.sol";
 import {IInterestRateModel} from "./interfaces/IInterestRateModel.sol";
 
@@ -33,6 +34,8 @@ import {IInterestRateModel} from "./interfaces/IInterestRateModel.sol";
  * public, such as Migration errors or errors that specifically refer to previous versions.
  *
  ******************************************************************************/
+
+error LendingPool__FOT();
 
 /*******************************************************************************
  *
@@ -90,6 +93,8 @@ contract LendingPool is ReentrancyGuard, Pausable {
      *
      **************************************************************************/
 
+    event Deposit(address indexed user, uint256 amount, uint256 sharesMinted);
+
     /***************************************************************************
      *
      *
@@ -138,6 +143,11 @@ contract LendingPool is ReentrancyGuard, Pausable {
 
     MarketState internal _market;
 
+    mapping(address => uint256) supplyShares;
+    mapping(address => uint256) borrowShares;
+    mapping(address => uint8) usingAsCollateral;
+    mapping(address => mapping(address => uint256)) supplyShareAllowance;
+
     /***************************************************************************
      *
      *
@@ -183,6 +193,17 @@ contract LendingPool is ReentrancyGuard, Pausable {
     /**
      * Rounding: FLOOR – depositor receives no more shares than they paid for
      * Pause: new deposits blocked when paused == true
+     * 
+     * // TODO: Overflow Proofs
+     * - amountReceived
+     * - sharesMinted
+     * - _market.totalSupplyAssets
+     * - _market.totalSupplyShares
+     * - supplyShares[onBehalfOf]
+     * - _market.reserves
+     * - _market.lastUpdateTimestamp
+     * - _market.borrowIndex
+     * - _market.supplyIndex
      */
     function deposit(
         uint256 amount,
@@ -194,16 +215,67 @@ contract LendingPool is ReentrancyGuard, Pausable {
             IERC20(underlying).balanceOf(msg.sender) >= amount,
             InsufficientBalance(address(this))
         );
-        
+
         // Accrues interest (_accrueInterest())
         _accrueInterest();
+
         // Transfers amount of underlying from caller.
-        // Computes shares to mint sharesMinted = _convertToShares(amount, Math.FLOOR)
+        uint256 contractBalanceBefore = IERC20(underlying).balanceOf(
+            address(this)
+        );
+
+        uint256 amountReceived = 0;
+
+        if (
+            SafeERC20.trySafeTransferFrom(
+                IERC20(underlying),
+                msg.sender,
+                address(this),
+                amount
+            )
+        ) {
+            if (
+                IERC20(underlying).balanceOf(address(this)) -
+                    contractBalanceBefore ==
+                0
+            ) {
+                revert LendingPool__FOT();
+            }
+            unchecked {
+                amountReceived =
+                    IERC20(underlying).balanceOf(address(this)) -
+                    contractBalanceBefore;
+            }
+        }
+
+        // Computes shares to mint sharesMinted = #psuedo convertToShares(amount, Math.FLOOR)
         //   (round down, per rounding table).
-        // Mints shares to onBehalfOf via _mintSupplyShares().
+        unchecked {
+            uint256 assetsEff = uint256(_market.totalSupplyAssets) +
+                VIRTUAL_ASSETS;
+            uint256 sharesEFF = uint256(_market.totalSupplyShares) +
+                VIRTUAL_SHARES;
+            sharesMinted = (amountReceived * sharesEFF) / assetsEff;
+
+            // Mints shares to onBehalfOf via #psuedo mintSupplyShares().
+            supplyShares[onBehalfOf] += sharesMinted;
+            _market.totalSupplyAssets = uint128(
+                uint256(_market.totalSupplyAssets) + amountReceived
+            );
+            _market.totalSupplyShares = uint128(
+                uint256(_market.totalSupplyShares) + sharesMinted
+            );
+        }
+
+        // _market.totalSupplyAssets =
         // If usingAsCollateral[onBehalfOf] is true, calls
         //   collateralManager.addCollateral(onBehalfOf, underlying, amount).
-        // Emits Deposit event.
+        if (usingAsCollateral[onBehalfOf] == 1) {
+            // TODO: Implement collateralManager.addCollateral(onBehalfOf, underlying, amount).
+        }
+
+        // Emit Deposit event.
+        emit Deposit(onBehalfOf, amount, sharesMinted);
     }
 
     /**
