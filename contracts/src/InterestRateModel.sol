@@ -65,6 +65,8 @@ contract InterestRateModel is IInterestRateModel {
         require(
             _baseRatePerSecond <= type(uint64).max &&
                 _slope1PerSecond <= type(uint64).max &&
+
+                // Spec slope2 (75%) and max (300%) overflow uint64. Max slope that fits ≈ ~58% APR.
                 _slope2PerSecond <= type(uint64).max,
             InterestRateModel__RateTooHigh()
         );
