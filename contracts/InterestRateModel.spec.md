@@ -55,18 +55,16 @@ where `utilization = totalBorrowAssets / totalSupplyAssets` (see below).
 | `BASIS_POINTS` | `1e4` | 10_000 = 100%; 1000 = 10% reserve factor |
 | `SECONDS_PER_YEAR` | `31_557_600` | 365.25 × 86400 (Julian year; document if changed) |
 
-**Rate domain:** all rates exposed by the IRM are **per-second** values in **RAY**.
+**Rate domain:**
 
-**Annual → per-second conversion (constructor / governance input):**
+- **Storage / constructor:** annual rates in **RAY** (APR-RAY), e.g. `4e25` = 4% APR.
+- **`getBorrowRate` return:** **per-second** RAY (after `aprRayToPerSecond`), for pool accrual.
 
 ```text
-ratePerSecond = floor( ratePerYearRay × 1 / SECONDS_PER_YEAR )
-              = ratePerYearRay / SECONDS_PER_YEAR
+ratePerSecond = floor( aprRay / SECONDS_PER_YEAR )
 ```
 
-**Example:** 5% APR as RAY per year = `0.05 × RAY = 5e25`  
-→ per second ≈ `5e25 / 31_557_600 = 1_585_489_599_188_227_405` RAY/sec  
-(matches `AccrueInterest.t.sol` test constant).
+**Example:** 5% APR = `5e25` → per second ≈ `5e25 / 31_557_600 ≈ 1.585e18` RAY/sec.
 
 ---
 
@@ -102,11 +100,13 @@ Two-segment linear curve in utilization space.
 
 | Parameter | Type | Unit | Description |
 | :--- | :--- | :--- | :--- |
-| `baseRatePerSecond` | `uint256` | RAY/sec | Rate when U = 0 |
-| `slope1PerSecond` | `uint256` | RAY/sec per 100% util | Rate increase below kink |
-| `slope2PerSecond` | `uint256` | RAY/sec per 100% util | Rate increase above kink (typically >> slope1) |
-| `kink` | `uint256` | WAD | Utilization threshold (e.g. `0.8e18` = 80%) |
-| `maxRatePerSecond` | `uint256` | RAY/sec | Optional cap (`0` = no cap) |
+| `baseAprRay` | `uint96` | APR-RAY | Rate when U = 0 |
+| `slope1AprRay` | `uint96` | APR-RAY per 100% util | Rate increase below kink |
+| `slope2AprRay` | `uint128` | APR-RAY per 100% util | Rate increase above kink (typically >> slope1) |
+| `kink` | `uint64` | WAD | Utilization threshold (e.g. `0.8e18` = 80%) |
+| `maxAprRay` | `uint128` | APR-RAY | Cap (`> 0` required) |
+
+At runtime, each APR-RAY field is converted with `aprRayToPerSecond` before the kink formula.
 
 ### Math
 
@@ -146,25 +146,39 @@ Borrow rate rounded **down** pairs with `LendingPool` index advance rounded **do
 
 ## Storage layout
 
-**Goal:** single slot for curve parameters
+**Committed model: Option B — store APR-RAY, expand to per-second at read.**
+
+Strict budget: **≤3 storage slots** for IRM config. Implementation uses **2**; slot 3 reserved.
 
 ```solidity
+// Slot 0 (256 bits): 96 + 96 + 64
 struct RateParams {
-    uint64  baseRatePerSecond;   // max ~18.4 RAY/sec fits; rates are tiny (~1e18 RAY/sec max sensible)
-    uint64  slope1PerSecond;
-    uint64  slope2PerSecond;
-    uint64  kink;                // WAD, e.g. 0.8e18 — fits in uint64? 0.8e18 = 8e17 fits
+    uint96 baseAprRay;      // annual RAY (e.g. 0)
+    uint96 slope1AprRay;    // annual RAY per 100% util below kink (e.g. 4e25 = 4%)
+    uint64 kink;            // WAD (e.g. 0.8e18 = 80%)
 }
-// Slot 0: RateParams (256 bits)
 
-uint256 maxRatePerSecond;        // Slot 1 (0 = disabled)
+// Slot 1 (256 bits): 128 + 128
+struct SteepParams {
+    uint128 slope2AprRay;   // annual RAY above kink (e.g. 75e25 = 75%)
+    uint128 maxAprRay;      // annual cap (e.g. 300e25 = 300%); must be > 0
+}
+// Slot 2: reserved
 ```
 
-**Constraint:** deployed rates MUST be validated in constructor so each uint64 cast is safe.
+**Why APR-RAY (not per-second in storage):** packing per-second RAY into `uint64` overflows at ~58% APR. Spec needs 75% / 300%. Annual RAY (`4e25`, `75e25`, `300e25`) fits `uint96` / `uint128`.
 
-**Alternative (if kink needs full WAD 1e18):** store `kink` as `uint128` + `maxRatePerSecond` as `uint128` in slot 1; keep three uint64 slopes + base in slot 0.
+**Runtime conversion** (`HelixMath.aprRayToPerSecond`):
 
-**Storage rule:** do not rely on `0` as “enabled” for rates — `baseRatePerSecond` may legitimately be `0`; use explicit `maxRatePerSecond == 0` to mean “no cap”.
+```text
+ratePerSecond = floor(aprRay / SECONDS_PER_YEAR)   // SECONDS_PER_YEAR = 31_557_600
+```
+
+`getBorrowRate` still returns **per-second RAY** for `LendingPool` accrual — only storage units changed.
+
+**Validation:** `require(x <= type(T).max)` before cast — never bitwise-mask oversized values.
+
+**Storage rule:** `baseAprRay` may be `0`; `maxAprRay == 0` is **invalid** (constructor requires `maxAprRay > 0`).
 
 ---
 
@@ -201,30 +215,33 @@ Concrete implementation (not abstract in production). `MockInterestRateModel` re
 
 ```solidity
 constructor(
-    uint256 baseRatePerSecond_,
-    uint256 slope1PerSecond_,
-    uint256 slope2PerSecond_,
-    uint256 kink_,               // WAD
-    uint256 maxRatePerSecond_    // 0 = no cap
+    uint256 baseAprRay_,      // annual RAY
+    uint256 slope1AprRay_,    // annual RAY
+    uint256 slope2AprRay_,    // annual RAY
+    uint256 kink_,            // WAD
+    uint256 maxAprRay_        // annual RAY; must be > 0
 )
 ```
 
 **Validation (revert if violated):**
 
 - `kink_ <= WAD`
-- `baseRatePerSecond_`, `slope1PerSecond_`, `slope2PerSecond_` fit in packed uint64 if using packed layout
-- `maxRatePerSecond_ == 0 || maxRatePerSecond_ >= baseRatePerSecond_`
-- Optional: `slope2PerSecond_ >= slope1PerSecond_` (recommended, not required)
+- `baseAprRay_`, `slope1AprRay_` fit in `uint96`
+- `slope2AprRay_`, `maxAprRay_` fit in `uint128`
+- `slope2AprRay_ >= slope1AprRay_`
+- `maxAprRay_ > 0 && maxAprRay_ >= baseAprRay_`
 
-**Example deployment (USDC market, 6 decimals on asset — rates independent of decimals):**
+**Example deployment (USDC market — rates independent of token decimals):**
 
-| Param | Human | Stored |
+| Param | Human | Stored (APR-RAY) |
 | :--- | :--- | :--- |
 | base | 0% APR | `0` |
-| slope1 | 4% APR per 100% util below kink | `4e25 / SECONDS_PER_YEAR` |
-| slope2 | 75% APR per 100% util above kink | `75e25 / SECONDS_PER_YEAR` |
-| kink | 80% | `8e17` |
-| max | 300% APR cap | `300e25 / SECONDS_PER_YEAR` |
+| slope1 | 4% APR per 100% util below kink | `4e25` |
+| slope2 | 75% APR per 100% util above kink | `75e25` |
+| kink | 80% | `0.8e18` |
+| max | 300% APR cap | `300e25` |
+
+Hot path expands: `aprRayToPerSecond(4e25) ≈ 1.267e18` RAY/sec.
 
 ---
 
@@ -440,7 +457,8 @@ Exact compounding over a year differs slightly due to truncation; UI should labe
 
 - [ ] **No events** on `getBorrowRate` (hot path).
 - [ ] **Pure/view math** — no external calls inside IRM.
-- [ ] **Packed `RateParams`** in one storage slot.
+- [ ] **Packed `RateParams` + `SteepParams`** in 2 slots (APR-RAY Option B); slot 3 reserved.
+- [ ] **`aprRayToPerSecond`** in HelixMath; constructor takes APR-RAY.
 - [ ] **`!= 0` guards** before divide where denominator can be zero.
 - [ ] **Named returns** on internal helpers (`utilizationWad`, `borrowRatePerSecond`).
 - [ ] **Floor divisions** only (protocol favor).

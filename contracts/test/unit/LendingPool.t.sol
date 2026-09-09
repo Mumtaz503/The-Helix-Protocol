@@ -44,20 +44,15 @@ contract AccrueInterestTest is Test {
 
     uint256 internal constant RESERVE_FACTOR = 1000; // 10%
     uint256 internal constant DUST = 1e6;
-    // ~5% APR in RAY per second: 5e25 / 365.25 days / 86400 sec
-    uint256 internal constant RATE_PER_SECOND = 1585489599188227405;
-    uint256 internal constant SECONDS_PER_year = 31_557_600;
-    uint256 internal constant BASE_RATE = 0;
-    // 4% APR -> per-second RAYn
-    uint256 internal constant SLOPE1 = 4e25 / SECONDS_PER_year;
-    // 50% APR -> per-second RAY 50% fits for uint64 75% will overflow
-    uint256 internal constant SLOPE2 = 50e25 / SECONDS_PER_year;
-    uint256 internal constant KINK = 0.8e18; // 80% utilization
-    uint256 internal constant MAX_RATE = type(uint64).max;
-
+    // Constructor takes APR-RAY (Option B), not per-second
+    uint256 internal constant BASE_APR = 0;
+    uint256 internal constant SLOPE1_APR = 4e25; // 4%
+    uint256 internal constant SLOPE2_APR = 75e25; // 75%
+    uint256 internal constant KINK = 0.8e18; // 80%
+    uint256 internal constant MAX_APR = 300e25; // 300%
 
     function setUp() public {
-        irm = new InterestRateModel(BASE_RATE, SLOPE1, SLOPE2, KINK, MAX_RATE);
+        irm = new InterestRateModel(BASE_APR, SLOPE1_APR, SLOPE2_APR, KINK, MAX_APR);
         pool = new LendingPoolHarness(
             address(0x1),
             address(0x2),

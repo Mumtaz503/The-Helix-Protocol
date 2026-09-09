@@ -9,8 +9,8 @@ import {HelixMath, WAD} from "./libraries/HelixMath.sol";
  * @title: InterestRateModel
  * @author: mumtaz503
  *
- * This contract implements the interest rate model for the protocol's interest accrual.
- * @notice all rates exposed by the IRM are per-second values in RAY
+ * Kinked utilization curve. Storage holds **annual rates in RAY (APR-RAY)**;
+ * `getBorrowRate` expands to per-second RAY via HelixMath.aprRayToPerSecond.
  *
  ******************************************************************************/
 
@@ -22,6 +22,7 @@ import {HelixMath, WAD} from "./libraries/HelixMath.sol";
  * public, such as Migration errors or errors that specifically refer to previous versions.
  *
  ******************************************************************************/
+
 error InterestRateModel__KinkExceededWAD();
 error InterestRateModel__RateTooHigh();
 error InterestRateModel__Slope2TooLow();
@@ -54,38 +55,42 @@ error InterestRateModel__MaxRateTooLow();
  ******************************************************************************/
 
 contract InterestRateModel is IInterestRateModel {
+    /// @param _baseAprRay Annual base rate in RAY (0 = 0% APR)
+    /// @param _slope1AprRay Annual slope1 in RAY per 100% util below kink (e.g. 4e25 = 4%)
+    /// @param _slope2AprRay Annual slope2 in RAY per 100% util above kink (e.g. 75e25 = 75%)
+    /// @param _kink Utilization threshold in WAD (e.g. 0.8e18 = 80%)
+    /// @param _maxAprRay Annual borrow-rate cap in RAY (e.g. 300e25 = 300%); must be > 0
     constructor(
-        uint256 _baseRatePerSecond,
-        uint256 _slope1PerSecond,
-        uint256 _slope2PerSecond,
+        uint256 _baseAprRay,
+        uint256 _slope1AprRay,
+        uint256 _slope2AprRay,
         uint256 _kink,
-        uint256 _maxRatePerSecond
+        uint256 _maxAprRay
     ) {
         require(_kink <= WAD, InterestRateModel__KinkExceededWAD());
         require(
-            _baseRatePerSecond <= type(uint64).max &&
-                _slope1PerSecond <= type(uint64).max &&
-
-                // Spec slope2 (75%) and max (300%) overflow uint64.
-                _slope2PerSecond <= type(uint64).max,
+            _baseAprRay <= type(uint96).max && _slope1AprRay <= type(uint96).max,
             InterestRateModel__RateTooHigh()
         );
         require(
-            _slope2PerSecond >= _slope1PerSecond,
-            InterestRateModel__Slope2TooLow()
+            _slope2AprRay <= type(uint128).max && _maxAprRay <= type(uint128).max,
+            InterestRateModel__RateTooHigh()
         );
+        require(_slope2AprRay >= _slope1AprRay, InterestRateModel__Slope2TooLow());
         require(
-            _maxRatePerSecond > 0 && _maxRatePerSecond >= _baseRatePerSecond,
+            _maxAprRay > 0 && _maxAprRay >= _baseAprRay,
             InterestRateModel__MaxRateTooLow()
         );
+
         rateParams = RateParams({
-            baseRatePerSecond: uint64(_baseRatePerSecond),
-            slope1PerSecond: uint64(_slope1PerSecond),
-            slope2PerSecond: uint64(_slope2PerSecond),
+            baseAprRay: uint96(_baseAprRay),
+            slope1AprRay: uint96(_slope1AprRay),
             kink: uint64(_kink)
         });
-
-        maxRatePerSecond = _maxRatePerSecond;
+        steepParams = SteepParams({
+            slope2AprRay: uint128(_slope2AprRay),
+            maxAprRay: uint128(_maxAprRay)
+        });
     }
 
     /***************************************************************************
@@ -107,36 +112,21 @@ contract InterestRateModel is IInterestRateModel {
      *
      **************************************************************************/
 
-    //
+    // Slot 0
     struct RateParams {
-        // Slot 0: RateParams (256 bits)
-        uint64 baseRatePerSecond; // max ~18.4 RAY/sec fits; rates are tiny (~1e18 RAY/sec max sensible)
-        uint64 slope1PerSecond;
-        uint64 slope2PerSecond;
-        uint64 kink; // WAD, 0.8e18 = 8e17 fits in uint64
-        // ^--- if kink needs full WAD, then we need to store it as uint128 along with maxRatePerSecond
-        // TODO: Check/research if Kink needs full WAD
+        uint96 baseAprRay;
+        uint96 slope1AprRay;
+        uint64 kink; // WAD
     }
 
-    uint256 maxRatePerSecond; // Slot 1
+    // Slot 1: 128 + 128 = 256
+    struct SteepParams {
+        uint128 slope2AprRay;
+        uint128 maxAprRay;
+    }
 
-    /***************************************************************************
-     *
-     *
-     * Memory Data Structures
-     *
-     *
-     **************************************************************************/
-
-    /***************************************************************************
-     *
-     *
-     * PUBLIC ACCESS STATE DATA
-     *
-     *
-     **************************************************************************/
     RateParams public rateParams;
-
+    SteepParams public steepParams;
     /***************************************************************************
      *
      *
@@ -176,49 +166,50 @@ contract InterestRateModel is IInterestRateModel {
      *
      *
      **************************************************************************/
+
+     // TDOD: Optimizations
     function getBorrowRate(
         uint256 _totalSupplyAssets,
         uint256 _totalBorrowAssets
     ) external view returns (uint256 borrowRatePerSecond) {
-        // pull the rate params from storage & cache them in memory for better gas efficiency
-        RateParams memory _rateParams = rateParams;
+        RateParams memory rp = rateParams;
+        SteepParams memory sp = steepParams;
 
-        uint256 baseRatePerSecond = _rateParams.baseRatePerSecond;
-        uint256 slope1PerSecond = _rateParams.slope1PerSecond;
-        uint256 slope2PerSecond = _rateParams.slope2PerSecond;
-        uint256 kink = _rateParams.kink;
+        uint256 base = HelixMath.aprRayToPerSecond(rp.baseAprRay);
+        uint256 slope1 = HelixMath.aprRayToPerSecond(rp.slope1AprRay);
+        uint256 slope2 = HelixMath.aprRayToPerSecond(sp.slope2AprRay);
+        uint256 maxRate = HelixMath.aprRayToPerSecond(sp.maxAprRay);
+        uint256 kink = rp.kink;
 
-        // return base rate at 0& Utilization
         if (_totalBorrowAssets == 0 || _totalSupplyAssets == 0) {
-            return baseRatePerSecond;
+            return base;
+        }
+
+        // Extreme borrow/supply that would overflow WAD scaling -> cap at max rate.
+        if (_totalBorrowAssets > type(uint256).max / WAD) {
+            return maxRate;
         }
 
         uint256 utilization = (_totalBorrowAssets * WAD) / _totalSupplyAssets;
 
+        // If util * slope would overflow, rate is far above any real curve — return cap.
+        uint256 maxSlope = slope1 > slope2 ? slope1 : slope2;
+        if (maxSlope != 0 && utilization > type(uint256).max / maxSlope) {
+            return maxRate;
+        }
+
         if (utilization <= kink) {
-            // e.g: base = 0, slope1 = 5, utilization = 40% = 0.4e18 = 4e17
-            // at 40% utilization, the user pays 40% of the slope1 rate
-            borrowRatePerSecond =
-                baseRatePerSecond +
-                (utilization * slope1PerSecond) /
-                WAD;
-        // if utilization is greater than kink
+            borrowRatePerSecond = base + (utilization * slope1) / WAD;
         } else {
-            // e.g: base = 0, kink = 80%, utilization = 90% = 0.9e18 = 9e17
-            // at 90% utilization, the user pays 80% of the slope1 rate + 10% of the slope2 rate
-            // rate = base + 0.8 * slope1 + 0.1 * slope2
             borrowRatePerSecond =
-                baseRatePerSecond +
-                (kink * slope1PerSecond) /
-                WAD +
-                ((utilization - kink) * slope2PerSecond) /
-                WAD;
+                base +
+                (kink * slope1) / WAD +
+                ((utilization - kink) * slope2) / WAD;
         }
 
-        if (borrowRatePerSecond > maxRatePerSecond) {
-            return maxRatePerSecond;
+        if (borrowRatePerSecond > maxRate) {
+            return maxRate;
         }
-
         return borrowRatePerSecond;
     }
 
@@ -226,11 +217,9 @@ contract InterestRateModel is IInterestRateModel {
         uint256 _totalSupplyAssets,
         uint256 _totalBorrowAssets
     ) external pure returns (uint256 utilizationWad) {
-        // 0% utilization at no borrowing
-        if ( _totalSupplyAssets == 0 ) {
+        if (_totalSupplyAssets == 0) {
             return 0;
         }
-
         utilizationWad = (_totalBorrowAssets * WAD) / _totalSupplyAssets;
     }
     /***************************************************************************

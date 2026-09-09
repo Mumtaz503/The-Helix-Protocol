@@ -9,10 +9,18 @@ error InsufficientBalance(address pool);
 uint256 constant RAY = 1e27; //For interest accrual calculations precision
 uint256 constant WAD = 1e18; // For token amounts precision
 uint256 constant BASIS_POINTS = 1e4; // 10% of borrowed interest is reserved
+uint256 constant SECONDS_PER_YEAR = 31_557_600; // 365.25 * 86400 (Julian year)
+
 /// @title HelixMath
 /// @notice RAY-scaled fixed-point math for Helix markets. All divisions truncate (floor)
 ///         unless noted — rounding favors the protocol per the Helix rounding table.
 library HelixMath {
+    /// @dev Annual rate in RAY -> per-second rate in RAY (floor).
+    ///      Example: 5% APR = 5e25 -> ~1.585e18 RAY/sec.
+    function aprRayToPerSecond(uint256 aprRay) internal pure returns (uint256) {
+        return aprRay / SECONDS_PER_YEAR;
+    }
+
     /// @dev Compound factor in RAY: (1 + ratePerSecond/RAY)^seconds, computed via binary exponentiation.
     ///      `ratePerSecond` is the per-second borrow rate in RAY (e.g. 1e27 = 100%/sec is impossible in practice).
     ///      Returns RAY when `seconds_` or `ratePerSecond` is zero.

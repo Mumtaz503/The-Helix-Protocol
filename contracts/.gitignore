@@ -13,6 +13,8 @@ out/
 
 # Docs
 docs/
+Optimizations.txt
+Cases.txt
 
 # Dotenv file
 .env
