@@ -66,7 +66,7 @@ contract InterestRateModel is IInterestRateModel {
             _baseRatePerSecond <= type(uint64).max &&
                 _slope1PerSecond <= type(uint64).max &&
 
-                // Spec slope2 (75%) and max (300%) overflow uint64. Max slope that fits ≈ ~58% APR.
+                // Spec slope2 (75%) and max (300%) overflow uint64.
                 _slope2PerSecond <= type(uint64).max,
             InterestRateModel__RateTooHigh()
         );
