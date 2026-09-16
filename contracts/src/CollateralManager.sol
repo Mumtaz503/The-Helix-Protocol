@@ -2,17 +2,219 @@
 pragma solidity ^0.8.28;
 
 import {ICollateralManager} from "./interfaces/ICollateralManager.sol";
+import "./libraries/HelixMath.sol";
+
+/*******************************************************************************
+ *
+ * CollateralManager
+ *
+ * CollateralManager answers three questions for every user:
+ * What collateral do they have?
+ * How much debt do they owe (in value terms)?
+ * Are they healthy right now (HF ≥ 1)?
+ *
+ ******************************************************************************/
+
+/*******************************************************************************
+ *
+ * PRIVATE ERRORS SPECIFIC TO THIS CONTRACT
+ *
+ * Only put errors here if there is a reason to not show these errors to the
+ * public, such as Migration errors or errors that specifically refer to previous versions.
+ *
+ ******************************************************************************/
+error CollateralManager__PoolNotSet();
+error CollateralManager__AssetNotEnabled();
+/*******************************************************************************
+ *
+ * PRIVATE INTERFACES SPECIFIC TO THIS CONTRACT
+ *
+ * Only put interfaces here if there's a reason to not show the interface data,
+ * such as Migration-specific functions within other contracts or interfaces
+ *
+ ******************************************************************************/
+
+/*******************************************************************************
+ *
+ * PRIVATE CONSTANTS SPECIFIC TO THIS CONTRACT
+ *
+ * Only put constants here if there's a reason to not show the constant data,
+ * such as Migration-specific functions within other contracts or interfaces
+ *
+ ******************************************************************************/
+
+/*******************************************************************************
+ *
+ *
+ * CONTRACT IMPLEMENTATION
+ *
+ *
+ ******************************************************************************/
 
 contract CollateralManager is ICollateralManager {
-    function addCollateral(address user, address underlying, uint256 amount) external {
-        // TODO: Implement
+    constructor() {
+        // Set external contracts (if applicable)
     }
 
-    function removeCollateral(address user, address underlying, uint256 amount) external {
+    /***************************************************************************
+     *
+     *
+     * Event Logging
+     *
+     * TODO: is it possible to put events into the HELIX Library?  This will
+     * allow us to publicize all events.  Then again, maybe that's not a good
+     * idea for people to use these events...?  Could it mess with the UIs
+     *
+     **************************************************************************/
+
+    /***************************************************************************
+     *
+     *
+     * Storage Data Structures
+     *
+     *
+     **************************************************************************/
+    // Slot 0 positions[user]
+    struct Position {
+        uint80 collateralValueCache;
+        uint80 debtValueCache;
+        // ^ truncated & WAD scaled values
+        uint32 lastInteracted; // stores interaction time until year 2106
+        uint32 hfCache; // WAD >> 96
+        uint8 mode; // 0 = unset, 1 = isolated, 2 = cross-margin
+        uint8 flags; // bit0: hasDebt, bit1: inAuction
+        // ^ when an entire slot only holds whether something is true or false,
+        //    it's better to use uint(x) instead of bool
+        uint16 reserved;
+        // 80+80+32+32+8+8 = 240 bits -> 16 bits reserved
+    }
+
+    struct AssetConfig {
+        uint64 ltvWad; // e.g. 0.75e18
+        uint64 liquidationThresholdWad; // e.g. 0.80e18 scaled to WAD
+        uint64 liquidationBonusWad; // expanded in Phase 2
+        uint8 decimals;
+        uint8 enabled; // 0/1/2
+        // pack into <= 1 slot
+    }
+    /***************************************************************************
+     *
+     *
+     * Memory Data Structures
+     *
+     *
+     **************************************************************************/
+
+    /***************************************************************************
+     *
+     *
+     * PUBLIC ACCESS STATE DATA
+     *
+     *
+     **************************************************************************/
+    /**
+     * @dev Multi-asset cross-margin separation for collaterals
+     * https://github.com/Mumtaz503/The-Helix-Protocol/blob/main/docs/CollateralManager.spec.md#single-slot-position-packing
+     */
+    mapping(address => mapping(address => uint128)) public collateralAmounts;
+    mapping(address => address) public primaryAsset;
+
+    mapping(address => mapping(address => uint128)) public debtUnderlying;
+    // ^ user => market (LendingPool / underlying) => accrued debt units
+
+    mapping(address => uint8) public isPool; // 0 unset, 1 false, 2 true
+
+    address public auctionHouse;
+    address public oracle;
+    address public governance;
+    // ^ addresses for relevant protocol contracts
+
+    mapping(address => Position) public positions;
+    mapping(address => AssetConfig) public assetConfig;
+
+    /***************************************************************************
+     *
+     *
+     * INTERNAL ACCESS STATE DATA
+     *
+     *
+     **************************************************************************/
+
+    /***************************************************************************
+     *
+     *
+     * PRIVATE STATE DATA -- Abstract Contracts ONLY!!!
+     *
+     *
+     **************************************************************************/
+
+    /***************************************************************************
+     *
+     *
+     * FUNCTION MODIFIERS
+     *
+     *
+     **************************************************************************/
+
+    /***************************************************************************
+     *
+     *
+     * CONTRACT PRIVILEGE FUNCTIONALITY
+     *
+     *
+     **************************************************************************/
+
+    /***************************************************************************
+     *
+     *
+     * EXTERNAL FUNCTIONALITY for the user's interface
+     *
+     *
+     **************************************************************************/
+    function addCollateral(
+        address user,
+        address underlying,
+        uint256 amount
+    ) external {
+        require(isPool[msg.sender] == 2, CollateralManager__PoolNotSet());
+        require(assetConfig[underlying].enabled == 2, CollateralManager__AssetNotEnabled());
+        require(amount != 0, InvalidAmount(address(this)));
+    }
+
+    function removeCollateral(
+        address user,
+        address underlying,
+        uint256 amount
+    ) external {
         // TODO: Implement
     }
 
     function getCollateral(address user) external view returns (uint256) {
         // TODO: Implement
     }
+    /***************************************************************************
+     *
+     *
+     * PUBLIC AND INTERNAL ACCESS FUNCTIONALITY for the user and this contract
+     *
+     *
+     **************************************************************************/
+
+    /***************************************************************************
+     *
+     *
+     * INTERNAL FUNCTIONALITY
+     *
+     *
+     **************************************************************************/
+
+    /***************************************************************************
+     *
+     * PRIVATE FUNCTIONALITY -- Abstract Contracts ONLY!!!
+     *
+     * For abstract contracts, the private functionality will be within their
+     * very own section.  If this contract is not abstract, do not implement
+     * private functions, and remove this comment block!
+     *
+     **************************************************************************/
 }
