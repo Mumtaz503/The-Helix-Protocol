@@ -8,6 +8,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "./libraries/HelixMath.sol";
 import {IInterestRateModel} from "./interfaces/IInterestRateModel.sol";
+import {ICollateralManager} from "./interfaces/ICollateralManager.sol";
 
 /*******************************************************************************
  *
@@ -209,7 +210,7 @@ contract LendingPool is ReentrancyGuard, Pausable {
         uint256 amount,
         address onBehalfOf
     ) external nonReentrant whenNotPaused returns (uint256 sharesMinted) {
-        require(amount > 0, InvalidAmount(address(this)));
+        require(amount > 0 && amount <= type(uint128).max, InvalidAmount(address(this)));
         require(onBehalfOf != address(0), InvalidAddress(address(this)));
         require(
             IERC20(underlying).balanceOf(msg.sender) >= amount,
@@ -272,6 +273,7 @@ contract LendingPool is ReentrancyGuard, Pausable {
         //   collateralManager.addCollateral(onBehalfOf, underlying, amount).
         if (usingAsCollateral[onBehalfOf] == 1) {
             // TODO: Implement collateralManager.addCollateral(onBehalfOf, underlying, amount).
+            ICollateralManager(collateralManager).addCollateral(onBehalfOf, underlying, amount);
         }
 
         // Emit Deposit event.

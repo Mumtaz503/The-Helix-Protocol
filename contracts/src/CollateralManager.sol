@@ -25,6 +25,10 @@ import "./libraries/HelixMath.sol";
  ******************************************************************************/
 error CollateralManager__PoolNotSet();
 error CollateralManager__AssetNotEnabled();
+error CollateralManager__PrimaryAssetMismatch();
+error CollateralManager__AmountOverflow();
+error CollateralManager__ZeroUser();
+
 /*******************************************************************************
  *
  * PRIVATE INTERFACES SPECIFIC TO THIS CONTRACT
@@ -52,8 +56,8 @@ error CollateralManager__AssetNotEnabled();
  ******************************************************************************/
 
 contract CollateralManager is ICollateralManager {
-    constructor() {
-        // Set external contracts (if applicable)
+    constructor() payable {
+        // Governance / oracle / pools wired via setters (Phase 3 shape).
     }
 
     /***************************************************************************
@@ -66,6 +70,12 @@ contract CollateralManager is ICollateralManager {
      * idea for people to use these events...?  Could it mess with the UIs
      *
      **************************************************************************/
+
+    event CollateralAdded(
+        address indexed user,
+        address indexed asset,
+        uint256 amount
+    );
 
     /***************************************************************************
      *
@@ -80,7 +90,9 @@ contract CollateralManager is ICollateralManager {
         uint80 debtValueCache;
         // ^ truncated & WAD scaled values
         uint32 lastInteracted; // stores interaction time until year 2106
-        uint32 hfCache; // WAD >> 96
+        // HEALTH FACTOR CACHE IS NEVER AUTHORITATIVE.
+        // Liquidation / borrow / withdraw / disable-collateral MUST recompute live HF.
+        uint32 hfCache; // WAD >> 96 — keeper / UI hint only
         uint8 mode; // 0 = unset, 1 = isolated, 2 = cross-margin
         uint8 flags; // bit0: hasDebt, bit1: inAuction
         // ^ when an entire slot only holds whether something is true or false,
@@ -171,14 +183,52 @@ contract CollateralManager is ICollateralManager {
      *
      *
      **************************************************************************/
+    /**
+     * @notice Increase enabled collateral for `user` in `underlying`.
+     * @dev Only callable by a registered LendingPool (`isPool == 2`).
+     *      Isolated mode: first asset becomes primary; other assets revert.
+     *      HF / value caches are best-effort; never authoritative for auth.
+     */
     function addCollateral(
         address user,
         address underlying,
         uint256 amount
-    ) external {
+    ) external { //TODO: Access control modifer
+        require(user != address(0), CollateralManager__ZeroUser());
         require(isPool[msg.sender] == 2, CollateralManager__PoolNotSet());
-        require(assetConfig[underlying].enabled == 2, CollateralManager__AssetNotEnabled());
-        require(amount != 0, InvalidAmount(address(this)));
+        require(
+            assetConfig[underlying].enabled == 2,
+            CollateralManager__AssetNotEnabled()
+        );
+        require(amount != 0 && amount <= type(uint128).max, InvalidAmount(address(this)));
+
+        Position memory pos = positions[user];
+
+        // Isolated mode: only one collateral asset allowed.
+        if (pos.mode == 1) {
+            address primary = primaryAsset[user];
+            if (primary != address(0) && primary != underlying) {
+                revert CollateralManager__PrimaryAssetMismatch();
+            }
+            if (primary == address(0)) {
+                primaryAsset[user] = underlying;
+            }
+        }
+
+        uint256 newAmount = uint256(collateralAmounts[user][underlying]) +
+            amount;
+
+        // TODO: forget the revert. We need to make sure that collateralAmount does not exceed uint128.max.
+        // if (newAmount > type(uint128).max) {
+        //     revert CollateralManager__AmountOverflow();
+        // }
+        collateralAmounts[user][underlying] = uint128(newAmount);
+
+        // Opportunistic cache touch — NOT authoritative for liquidation/borrow auth.
+        pos.lastInteracted = uint32(block.timestamp);
+        positions[user] = pos;
+
+        emit CollateralAdded(user, underlying, amount);
     }
 
     function removeCollateral(
