@@ -194,7 +194,7 @@ contract LendingPool is ReentrancyGuard, Pausable {
     /**
      * Rounding: FLOOR – depositor receives no more shares than they paid for
      * Pause: new deposits blocked when paused == true
-     * 
+     *
      * // TODO: Overflow Proofs
      * - amountReceived
      * - sharesMinted
@@ -210,7 +210,10 @@ contract LendingPool is ReentrancyGuard, Pausable {
         uint256 amount,
         address onBehalfOf
     ) external nonReentrant whenNotPaused returns (uint256 sharesMinted) {
-        require(amount > 0 && amount <= type(uint128).max, InvalidAmount(address(this)));
+        require(
+            amount > 0 && amount <= type(uint128).max,
+            InvalidAmount(address(this))
+        );
         require(onBehalfOf != address(0), InvalidAddress(address(this)));
         require(
             IERC20(underlying).balanceOf(msg.sender) >= amount,
@@ -273,7 +276,11 @@ contract LendingPool is ReentrancyGuard, Pausable {
         //   collateralManager.addCollateral(onBehalfOf, underlying, amount).
         if (usingAsCollateral[onBehalfOf] == 1) {
             // TODO: Implement collateralManager.addCollateral(onBehalfOf, underlying, amount).
-            ICollateralManager(collateralManager).addCollateral(onBehalfOf, underlying, amount);
+            ICollateralManager(collateralManager).addCollateral(
+                onBehalfOf,
+                underlying,
+                amount
+            );
         }
 
         // Emit Deposit event.
