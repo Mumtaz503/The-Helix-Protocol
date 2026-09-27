@@ -223,33 +223,26 @@ contract LendingPool is ReentrancyGuard, Pausable {
         // Accrues interest (_accrueInterest())
         _accrueInterest();
 
-        // Transfers amount of underlying from caller.
+        // Transfers amount of underlying from caller; mint on balance delta (FoT-safe).
         uint256 contractBalanceBefore = IERC20(underlying).balanceOf(
             address(this)
         );
 
-        uint256 amountReceived = 0;
-
         if (
-            SafeERC20.trySafeTransferFrom(
+            !SafeERC20.trySafeTransferFrom(
                 IERC20(underlying),
                 msg.sender,
                 address(this),
                 amount
             )
         ) {
-            if (
-                IERC20(underlying).balanceOf(address(this)) -
-                    contractBalanceBefore ==
-                0
-            ) {
-                revert LendingPool__FOT();
-            }
-            unchecked {
-                amountReceived =
-                    IERC20(underlying).balanceOf(address(this)) -
-                    contractBalanceBefore;
-            }
+            revert InsufficientBalance(address(this));
+        }
+
+        uint256 amountReceived = IERC20(underlying).balanceOf(address(this)) -
+            contractBalanceBefore;
+        if (amountReceived == 0) {
+            revert LendingPool__FOT();
         }
 
         // Computes shares to mint sharesMinted = #psuedo convertToShares(amount, Math.FLOOR)
@@ -271,15 +264,13 @@ contract LendingPool is ReentrancyGuard, Pausable {
             );
         }
 
-        // _market.totalSupplyAssets =
-        // If usingAsCollateral[onBehalfOf] is true, calls
-        //   collateralManager.addCollateral(onBehalfOf, underlying, amount).
-        if (usingAsCollateral[onBehalfOf] == 1) {
-            // TODO: Implement collateralManager.addCollateral(onBehalfOf, underlying, amount).
+        // Spec encoding: 0=unset, 1=disabled, 2=enabled.
+        // CollateralManager.addCollateral is additive — pass this deposit's delta only.
+        if (usingAsCollateral[onBehalfOf] == 2) {
             ICollateralManager(collateralManager).addCollateral(
                 onBehalfOf,
                 underlying,
-                amount
+                amountReceived
             );
         }
 

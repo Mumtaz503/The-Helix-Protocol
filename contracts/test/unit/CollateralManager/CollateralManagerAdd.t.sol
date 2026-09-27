@@ -9,8 +9,8 @@ import {
     CollateralManager__PrimaryAssetMismatch,
     CollateralManager__AmountOverflow,
     CollateralManager__ZeroUser
-} from "../../src/CollateralManager.sol";
-import {InvalidAmount} from "../../src/libraries/HelixMath.sol";
+} from "../../../src/CollateralManager.sol";
+import {InvalidAmount} from "../../../src/libraries/HelixMath.sol";
 
 contract CollateralManagerHarness is CollateralManager {
     function setPool(address pool, uint8 status) external {

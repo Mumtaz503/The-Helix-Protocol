@@ -193,7 +193,8 @@ contract CollateralManager is ICollateralManager {
         address user,
         address underlying,
         uint256 amount
-    ) external { //TODO: Access control modifer
+    ) public virtual { //TODO: Access control modifer
+        // TODO: ^ needs to be external onlyLendingPool. Set as virtual for unit tests
         require(user != address(0), CollateralManager__ZeroUser());
         require(isPool[msg.sender] == 2, CollateralManager__PoolNotSet());
         require(
@@ -218,10 +219,9 @@ contract CollateralManager is ICollateralManager {
         uint256 newAmount = uint256(collateralAmounts[user][underlying]) +
             amount;
 
-        // TODO: forget the revert. We need to make sure that collateralAmount does not exceed uint128.max.
-        // if (newAmount > type(uint128).max) {
-        //     revert CollateralManager__AmountOverflow();
-        // }
+        if (newAmount > type(uint128).max) {
+            revert CollateralManager__AmountOverflow();
+        }
         collateralAmounts[user][underlying] = uint128(newAmount);
 
         // Opportunistic cache touch — NOT authoritative for liquidation/borrow auth.
