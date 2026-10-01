@@ -374,10 +374,25 @@ contract LendingPool is ReentrancyGuard, Pausable {
     function setUseAsCollateral(
         address user,
         bool enabled
-    ) external nonReentrant {
+    ) external nonReentrant whenNotPaused {
         // Only callable by user (or a manager with approval)
+        require(msg.sender == user, InvalidAddress(msg.sender));
+
+        _accrueInterest();
         // If enabled:
-        // - Call collateralManager.addCollateral(user, underlying, _userSupplyInUnderlying()).
+        if (enabled) {
+            usingAsCollateral[user] = 2;
+            uint256 assets = _userSupplyAssets(user);
+        
+           // - Call collateralManager.addCollateral(user, underlying, _userSupplyInUnderlying()).
+            if(assets > 0) {
+                ICollateralManager(collateralManager).addCollateral(
+                    user,
+                    underlying,
+                    assets
+                );
+            }
+        }
         // - Call collateralManager.removeCollateral(user, underlying, _userSupplyInUnderlying()).
         // Emits CollateralStatusChanged
     }
@@ -517,6 +532,16 @@ contract LendingPool is ReentrancyGuard, Pausable {
         return state;
     }
 
+    function _userSupplyAssets(
+        address user
+    ) internal view returns (uint256 supplyAssets) {
+        uint256 shares = supplyShares[user];
+        if (shares == 0) return supplyAssets;
+        uint256 assetsEff = uint256(_market.totalSupplyAssets) + VIRTUAL_ASSETS;
+        uint256 sharesEFF = uint256(_market.totalSupplyShares) + VIRTUAL_SHARES;
+        supplyAssets = (shares * assetsEff) / sharesEFF;
+        // return supplyAssets;
+    }
     /***************************************************************************
      *
      *
